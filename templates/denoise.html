@@ -1,0 +1,41 @@
+{% extends 'base.html' %}
+{% block title %}Noise Remover - SDXL Web UI{% endblock %}
+{% block content %}
+<h2>Noise Remover</h2>
+<form id="denoise-form" enctype="multipart/form-data">
+  <div class="row">
+    <label>Image</label>
+    <input type="file" name="image" accept="image/*" required>
+  </div>
+  <div class="row grid">
+    <div>
+      <label>Strength (0-100)</label>
+      <input type="number" name="strength" value="20" min="0" max="100">
+    </div>
+  </div>
+  <button type="submit">Remove Noise</button>
+  <a class="quiet-link" href="/">Back</a>
+  </form>
+  <div class="output" id="denoise-output"></div>
+  <script>
+    (function(){
+      const form = document.getElementById('denoise-form');
+      const output = document.getElementById('denoise-output');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        output.innerHTML = '<div class="spinner">Processing…</div>';
+        try {
+          const body = new FormData(form);
+          const res = await fetch('/api/denoise', { method: 'POST', body });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Request failed');
+          output.innerHTML = `<a href="${data.url}" target="_blank"><img src="${data.url}" alt="output"></a>`;
+        } catch (err) {
+          output.innerHTML = `<div class="error">${err.message}</div>`;
+        }
+      });
+    })();
+  </script>
+{% endblock %}
+
+

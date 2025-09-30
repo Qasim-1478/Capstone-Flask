@@ -1,0 +1,39 @@
+{% extends 'base.html' %}
+{% block title %}Upscale 4x - SDXL Web UI{% endblock %}
+{% block content %}
+<h2>Upscale 4x</h2>
+<form id="upscale-form" enctype="multipart/form-data">
+  <div class="row">
+    <label>Image</label>
+    <input type="file" name="image" accept="image/*" required>
+  </div>
+  <div class="row">
+    <label>Prompt (optional)</label>
+    <input type="text" name="prompt" placeholder="high detail, sharp, clean">
+  </div>
+  <button type="submit">Upscale</button>
+  <a class="quiet-link" href="/">Back</a>
+  </form>
+  <div class="output" id="upscale-output"></div>
+  <script>
+    (function(){
+      const form = document.getElementById('upscale-form');
+      const output = document.getElementById('upscale-output');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        output.innerHTML = '<div class="spinner">Processing…</div>';
+        try {
+          const body = new FormData(form);
+          const res = await fetch('/api/upscale', { method: 'POST', body });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Request failed');
+          output.innerHTML = `<a href="${data.url}" target="_blank"><img src="${data.url}" alt="output"></a>`;
+        } catch (err) {
+          output.innerHTML = `<div class="error">${err.message}</div>`;
+        }
+      });
+    })();
+  </script>
+{% endblock %}
+
+

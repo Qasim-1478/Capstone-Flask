@@ -1,0 +1,57 @@
+{% extends 'base.html' %}
+{% block title %}Image to Image - SDXL Web UI{% endblock %}
+{% block content %}
+<h2>Image to Image</h2>
+<form id="i2i-form" enctype="multipart/form-data">
+  <div class="row">
+    <label>Init Image</label>
+    <input type="file" name="image" accept="image/*" required>
+  </div>
+  <div class="row">
+    <label>Prompt</label>
+    <textarea name="prompt" placeholder="Refine the style" required></textarea>
+  </div>
+  <div class="row">
+    <label>Negative Prompt</label>
+    <input type="text" name="negative_prompt" placeholder="blurry, low quality">
+  </div>
+  <div class="row grid">
+    <div>
+      <label>Strength</label>
+      <input type="number" step="0.05" name="strength" value="0.7" min="0" max="1">
+    </div>
+    <div>
+      <label>Steps</label>
+      <input type="number" name="steps" value="30" min="1" max="100">
+    </div>
+    <div>
+      <label>Guidance</label>
+      <input type="number" step="0.1" name="guidance_scale" value="7.0" min="0" max="20">
+    </div>
+  </div>
+  <button type="submit">Transform</button>
+  <a class="quiet-link" href="/">Back</a>
+  </form>
+  <div class="output" id="i2i-output"></div>
+  <script>
+    (function(){
+      const form = document.getElementById('i2i-form');
+      const output = document.getElementById('i2i-output');
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        output.innerHTML = '<div class="spinner">Processing…</div>';
+        try {
+          const body = new FormData(form);
+          const res = await fetch('/api/img2img', { method: 'POST', body });
+          const data = await res.json();
+          if (!res.ok) throw new Error(data.error || 'Request failed');
+          output.innerHTML = `<a href="${data.url}" target="_blank"><img src="${data.url}" alt="output"></a>`;
+        } catch (err) {
+          output.innerHTML = `<div class="error">${err.message}</div>`;
+        }
+      });
+    })();
+  </script>
+{% endblock %}
+
+

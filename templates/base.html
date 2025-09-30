@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}SDXL Web UI{% endblock %}</title>
+    <link rel="stylesheet" href="/static/styles.css">
+  </head>
+  <body>
+    <nav class="topnav">
+      <a href="/">Home</a>
+      <a href="/text2img">Text2Img</a>
+      <a href="/img2img">Img2Img</a>
+      <a href="/upscale">Upscale 4x</a>
+      <a href="/denoise">Noise Remover</a>
+      <a href="/inpaint">Occlusion Remover</a>
+    </nav>
+    <div class="container">
+      {% block content %}{% endblock %}
+    </div>
+  </body>
+  </html>
+
+
