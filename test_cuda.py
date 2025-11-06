@@ -1,35 +1,63 @@
 import os
 import io
 import base64
-# import torch
+import torch
+import gc
 
-from diffusers import StableDiffusionXLPipeline
+from diffusers import (
+    StableDiffusionXLPipeline,
+    StableDiffusionXLImg2ImgPipeline,
+    StableDiffusionUpscalePipeline,
+    StableDiffusionXLInpaintPipeline
+)
+
 from datetime import datetime
-from typing import Optional
-
 from flask import Flask, request, jsonify, render_template, send_from_directory
+from PIL import Image
+import numpy as np
+import cv2
 
 
-# Lazy-loaded global pipelines
+# ============================================================
+# ✅ GLOBAL PIPELINES (will load/unload automatically)
+# ============================================================
 sdxl_txt2img_pipe = None
 sdxl_img2img_pipe = None
 sd_upscale_pipe = None
 sdxl_inpaint_pipe = None
 
 
+# ============================================================
+# ✅ VRAM CLEANER – AUTO UNLOAD EVERYTHING
+# ============================================================
+def unload_all_pipelines():
+    global sdxl_txt2img_pipe, sdxl_img2img_pipe, sd_upscale_pipe, sdxl_inpaint_pipe
+
+    sdxl_txt2img_pipe = None
+    sdxl_img2img_pipe = None
+    sd_upscale_pipe = None
+    sdxl_inpaint_pipe = None
+
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.ipc_collect()
+
+
+# ============================================================
+# ✅ DEVICE + DTYPE
+# ============================================================
 def get_device_and_dtype():
-    try:
-        import torch
-        if torch.cuda.is_available():
-            return "cuda", torch.float16
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return "mps", torch.float16
-        return "cpu", torch.float32
-    except Exception:
-        # Fallback if torch not installed yet
-        return "cpu", None
+    if torch.cuda.is_available():
+        return "cuda", torch.float16
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return "mps", torch.float16
+    return "cpu", torch.float32
 
 
+# ============================================================
+# ✅ UTILITIES
+# ============================================================
 def ensure_output_dir(path: str) -> None:
     os.makedirs(path, exist_ok=True)
 
@@ -49,35 +77,33 @@ def pil_to_base64(pil_image) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+# ============================================================
+# ✅ VRAM-OPTIMIZED LOADERS (Auto reload + Low-memory setup)
+# ============================================================
+
 def load_sdxl_txt2img():
     global sdxl_txt2img_pipe
     if sdxl_txt2img_pipe is not None:
         return sdxl_txt2img_pipe
 
-    
-
     device, dtype = get_device_and_dtype()
-    # Prefer local directory if provided
-    local_dir = os.environ.get("SDXL_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = "stabilityai/stable-diffusion-xl-base-1.0"
 
     pipe = StableDiffusionXLPipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
+        torch_dtype=dtype,
         use_safetensors=True,
-        local_files_only=local_only,
     )
 
     if device == "cuda":
         pipe = pipe.to(device)
         pipe.enable_xformers_memory_efficient_attention()
-    elif device == "mps":
-        pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sdxl_txt2img_pipe = pipe
     return pipe
 
@@ -87,30 +113,24 @@ def load_sdxl_img2img():
     if sdxl_img2img_pipe is not None:
         return sdxl_img2img_pipe
 
-    import torch
-    from diffusers import StableDiffusionXLImg2ImgPipeline
-
     device, dtype = get_device_and_dtype()
-    local_dir = os.environ.get("SDXL_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = "stabilityai/stable-diffusion-xl-base-1.0"
 
     pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
+        torch_dtype=dtype,
         use_safetensors=True,
-        local_files_only=local_only,
     )
 
     if device == "cuda":
         pipe = pipe.to(device)
         pipe.enable_xformers_memory_efficient_attention()
-    elif device == "mps":
-        pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sdxl_img2img_pipe = pipe
     return pipe
 
@@ -120,30 +140,24 @@ def load_upscaler():
     if sd_upscale_pipe is not None:
         return sd_upscale_pipe
 
-    import torch
-    from diffusers import StableDiffusionUpscalePipeline
-
     device, dtype = get_device_and_dtype()
-    local_dir = os.environ.get("SD_UPSCALE_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SD_UPSCALE_MODEL_ID", "stabilityai/stable-diffusion-x4-upscaler")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = "stabilityai/stable-diffusion-x4-upscaler"
 
     pipe = StableDiffusionUpscalePipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
+        torch_dtype=dtype,
         use_safetensors=True,
-        local_files_only=local_only,
     )
 
     if device == "cuda":
         pipe = pipe.to(device)
         pipe.enable_xformers_memory_efficient_attention()
-    elif device == "mps":
-        pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sd_upscale_pipe = pipe
     return pipe
 
@@ -153,46 +167,46 @@ def load_sdxl_inpaint():
     if sdxl_inpaint_pipe is not None:
         return sdxl_inpaint_pipe
 
-    import torch
-    from diffusers import StableDiffusionXLInpaintPipeline
-
     device, dtype = get_device_and_dtype()
-    local_dir = os.environ.get("SDXL_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = "stabilityai/stable-diffusion-xl-base-1.0"
 
     pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
+        torch_dtype=dtype,
         use_safetensors=True,
-        local_files_only=local_only,
     )
 
     if device == "cuda":
         pipe = pipe.to(device)
         pipe.enable_xformers_memory_efficient_attention()
-    elif device == "mps":
-        pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sdxl_inpaint_pipe = pipe
     return pipe
 
 
+# ============================================================
+# ✅ FLASK APP
+# ============================================================
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
     app.config["OUTPUT_FOLDER"] = os.path.join(app.root_path, "static", "outputs")
-    ensure_output_dir(app.config["UPLOAD_FOLDER"]) 
-    ensure_output_dir(app.config["OUTPUT_FOLDER"]) 
 
+    ensure_output_dir(app.config["UPLOAD_FOLDER"])
+    ensure_output_dir(app.config["OUTPUT_FOLDER"])
+
+    # ------------------------------
+    # ✅ Render pages
+    # ------------------------------
     @app.route("/")
     def index():
         return render_template("index.html")
 
-    # Feature pages
     @app.route("/text2img")
     def page_text2img():
         return render_template("text2img.html")
@@ -217,19 +231,20 @@ def create_app() -> Flask:
     def serve_output(filename: str):
         return send_from_directory(app.config["OUTPUT_FOLDER"], filename)
 
+    # =====================================================
+    # ✅ TEXT 2 IMG API (Auto unload)
+    # =====================================================
     @app.post("/api/text2img")
     def api_text2img():
         try:
             data = request.form if request.form else request.json
-            prompt = (data.get("prompt") if data else None) or request.form.get("prompt")
-            negative_prompt = (data.get("negative_prompt") if data else None) or request.form.get("negative_prompt")
-            steps = int(((data or {}).get("steps") or request.form.get("steps") or 30))
-            guidance = float(((data or {}).get("guidance_scale") or request.form.get("guidance_scale") or 7.0))
-            width = int(((data or {}).get("width") or request.form.get("width") or 1024))
-            height = int(((data or {}).get("height") or request.form.get("height") or 1024))
 
-            if not prompt or str(prompt).strip() == "":
-                return jsonify({"error": "Missing prompt"}), 400
+            prompt = data.get("prompt")
+            negative_prompt = data.get("negative_prompt")
+            steps = int(data.get("steps", 30))
+            guidance = float(data.get("guidance_scale", 7.0))
+            width = int(data.get("width", 1024))
+            height = int(data.get("height", 1024))
 
             pipe = load_sdxl_txt2img()
             result = pipe(
@@ -240,13 +255,20 @@ def create_app() -> Flask:
                 width=width,
                 height=height,
             )
+
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "t2i")
+
+            unload_all_pipelines()
             return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
+
         except Exception as e:
-            raise e
+            unload_all_pipelines()
             return jsonify({"error": str(e)}), 500
 
+    # =====================================================
+    # ✅ IMG2IMG API (Auto unload)
+    # =====================================================
     @app.post("/api/img2img")
     def api_img2img():
         try:
@@ -255,15 +277,9 @@ def create_app() -> Flask:
             strength = float(request.form.get("strength", 0.7))
             steps = int(request.form.get("steps", 30))
             guidance = float(request.form.get("guidance_scale", 7.0))
-            init_image_file = request.files.get("image")
-            if not init_image_file:
-                return jsonify({"error": "Missing image file"}), 400
-            if not prompt or str(prompt).strip() == "":
-                return jsonify({"error": "Missing prompt"}), 400
 
-            # Load image
-            from PIL import Image
-            init_image = Image.open(init_image_file.stream).convert("RGB")
+            init_file = request.files.get("image")
+            init_image = Image.open(init_file.stream).convert("RGB")
 
             pipe = load_sdxl_img2img()
             result = pipe(
@@ -272,65 +288,68 @@ def create_app() -> Flask:
                 image=init_image,
                 strength=strength,
                 num_inference_steps=steps,
-                guidance_scale=guidance,
+                guidance_scale=guidance
             )
+
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "i2i")
+
+            unload_all_pipelines()
             return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
         except Exception as e:
+            unload_all_pipelines()
             return jsonify({"error": str(e)}), 500
 
+    # =====================================================
+    # ✅ UPSCALE API (Auto unload)
+    # =====================================================
     @app.post("/api/upscale")
     def api_upscale():
         try:
-            prompt = request.form.get("prompt", None)  # optional, some upscalers accept it
-            image_file = request.files.get("image")
-            if not image_file:
-                return jsonify({"error": "Missing image file"}), 400
-
-            from PIL import Image
-            lowres = Image.open(image_file.stream).convert("RGB")
+            prompt = request.form.get("prompt", "high detail, sharp, clean")
+            img_file = request.files.get("image")
+            lowres = Image.open(img_file.stream).convert("RGB")
 
             pipe = load_upscaler()
-            # Some SD upscalers accept a prompt; if None, pass empty string
-            result = pipe(
-                prompt=prompt or "high detail, sharp, clean",
-                image=lowres,
-            )
+            result = pipe(prompt=prompt, image=lowres)
+
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "upscale")
+
+            unload_all_pipelines()
             return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
         except Exception as e:
+            unload_all_pipelines()
             return jsonify({"error": str(e)}), 500
 
+    # =====================================================
+    # ✅ DENOISE API (No SDXL used)
+    # =====================================================
     @app.post("/api/denoise")
     def api_denoise():
         try:
             img_file = request.files.get("image")
-            if not img_file:
-                return jsonify({"error": "Missing image file"}), 400
             strength = int(request.form.get("strength", 20))
-            strength = max(0, min(100, strength))
-
-            from PIL import Image
-            import numpy as np
-            import cv2
 
             pil_img = Image.open(img_file.stream).convert("RGB")
-            img = np.array(pil_img)[:, :, ::-1]  # RGB->BGR
+            img = np.array(pil_img)[:, :, ::-1]
 
-            h = max(1, int(strength))
-            hColor = h
-            templateWindowSize = 7
-            searchWindowSize = 21
-            denoised = cv2.fastNlMeansDenoisingColored(img, None, h, hColor, templateWindowSize, searchWindowSize)
-            denoised_rgb = denoised[:, :, ::-1]
-            out_img = Image.fromarray(denoised_rgb)
+            denoised = cv2.fastNlMeansDenoisingColored(
+                img, None,
+                strength, strength,
+                7, 21
+            )
+            denoised = denoised[:, :, ::-1]
+            out_img = Image.fromarray(denoised)
+
             filename = save_pil_image(out_img, app.config["OUTPUT_FOLDER"], "denoise")
             return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # =====================================================
+    # ✅ INPAINT API (Auto unload)
+    # =====================================================
     @app.post("/api/inpaint")
     def api_inpaint():
         try:
@@ -341,14 +360,8 @@ def create_app() -> Flask:
             steps = int(request.form.get("steps", 30))
             guidance = float(request.form.get("guidance_scale", 7.0))
 
-            if not img_file or not mask_file:
-                return jsonify({"error": "Missing image or mask file"}), 400
-            if not prompt or str(prompt).strip() == "":
-                return jsonify({"error": "Missing prompt"}), 400
-
-            from PIL import Image
             init_image = Image.open(img_file.stream).convert("RGB")
-            mask_image = Image.open(mask_file.stream).convert("L")  # white=mask, black=keep
+            mask_image = Image.open(mask_file.stream).convert("L")
 
             pipe = load_sdxl_inpaint()
             result = pipe(
@@ -359,18 +372,22 @@ def create_app() -> Flask:
                 num_inference_steps=steps,
                 guidance_scale=guidance,
             )
+
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "inpaint")
+
+            unload_all_pipelines()
             return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
         except Exception as e:
+            unload_all_pipelines()
             return jsonify({"error": str(e)}), 500
 
     return app
 
 
+# ============================================================
+# ✅ RUN SERVER
+# ============================================================
 if __name__ == "__main__":
     app = create_app()
-    #host = os.environ.get("FLASK_HOST", "0.0.0.0")
-    #port = int(os.environ.get("FLASK_PORT", "5000"))
-    #debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(debug=True)

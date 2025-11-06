@@ -1,0 +1,10 @@
+.venv/
+.history/
+__pycache__/
+
+static/outputs/
+static/uploads/
+.DS_Store
+models/
+scripts/*
+instance/

@@ -1,8 +1,6 @@
 import os
 import io
 import base64
-# import torch
-
 from diffusers import StableDiffusionXLPipeline
 from datetime import datetime
 from typing import Optional
@@ -26,7 +24,6 @@ def get_device_and_dtype():
             return "mps", torch.float16
         return "cpu", torch.float32
     except Exception:
-        # Fallback if torch not installed yet
         return "cpu", None
 
 
@@ -49,24 +46,23 @@ def pil_to_base64(pil_image) -> str:
     return base64.b64encode(buf.getvalue()).decode("utf-8")
 
 
+# ✅✅✅ VRAM-OPTIMIZED SDXL LOADERS ✅✅✅
 def load_sdxl_txt2img():
     global sdxl_txt2img_pipe
     if sdxl_txt2img_pipe is not None:
         return sdxl_txt2img_pipe
 
-    
+    import torch
 
     device, dtype = get_device_and_dtype()
-    # Prefer local directory if provided
     local_dir = os.environ.get("SDXL_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else \
+        os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
 
     pipe = StableDiffusionXLPipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
-        use_safetensors=True,
-        local_files_only=local_only,
+        torch_dtype=dtype,
+        use_safetensors=True
     )
 
     if device == "cuda":
@@ -74,10 +70,13 @@ def load_sdxl_txt2img():
         pipe.enable_xformers_memory_efficient_attention()
     elif device == "mps":
         pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    # ✅ VRAM REDUCTION
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sdxl_txt2img_pipe = pipe
     return pipe
 
@@ -92,14 +91,13 @@ def load_sdxl_img2img():
 
     device, dtype = get_device_and_dtype()
     local_dir = os.environ.get("SDXL_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else \
+        os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
 
     pipe = StableDiffusionXLImg2ImgPipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
-        use_safetensors=True,
-        local_files_only=local_only,
+        torch_dtype=dtype,
+        use_safetensors=True
     )
 
     if device == "cuda":
@@ -107,10 +105,12 @@ def load_sdxl_img2img():
         pipe.enable_xformers_memory_efficient_attention()
     elif device == "mps":
         pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sdxl_img2img_pipe = pipe
     return pipe
 
@@ -125,14 +125,13 @@ def load_upscaler():
 
     device, dtype = get_device_and_dtype()
     local_dir = os.environ.get("SD_UPSCALE_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SD_UPSCALE_MODEL_ID", "stabilityai/stable-diffusion-x4-upscaler")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else \
+        os.environ.get("SD_UPSCALE_MODEL_ID", "stabilityai/stable-diffusion-x4-upscaler")
 
     pipe = StableDiffusionUpscalePipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
-        use_safetensors=True,
-        local_files_only=local_only,
+        torch_dtype=dtype,
+        use_safetensors=True
     )
 
     if device == "cuda":
@@ -140,10 +139,12 @@ def load_upscaler():
         pipe.enable_xformers_memory_efficient_attention()
     elif device == "mps":
         pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sd_upscale_pipe = pipe
     return pipe
 
@@ -158,14 +159,13 @@ def load_sdxl_inpaint():
 
     device, dtype = get_device_and_dtype()
     local_dir = os.environ.get("SDXL_LOCAL_DIR")
-    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
-    local_only = os.environ.get("HF_HUB_OFFLINE", "0") == "1"
+    model_id = local_dir if (local_dir and os.path.isdir(local_dir)) else \
+        os.environ.get("SDXL_MODEL_ID", "stabilityai/stable-diffusion-xl-base-1.0")
 
     pipe = StableDiffusionXLInpaintPipeline.from_pretrained(
         model_id,
-        torch_dtype=dtype if dtype is not None else None,
-        use_safetensors=True,
-        local_files_only=local_only,
+        torch_dtype=dtype,
+        use_safetensors=True
     )
 
     if device == "cuda":
@@ -173,26 +173,28 @@ def load_sdxl_inpaint():
         pipe.enable_xformers_memory_efficient_attention()
     elif device == "mps":
         pipe = pipe.to(device)
-    else:
-        pipe = pipe.to("cpu")
 
+    pipe.enable_vae_slicing()
+    pipe.enable_vae_tiling()
+    pipe.enable_sequential_cpu_offload()
     pipe.enable_attention_slicing()
+
     sdxl_inpaint_pipe = pipe
     return pipe
 
 
+# ✅ Flask Application
 def create_app() -> Flask:
     app = Flask(__name__)
     app.config["UPLOAD_FOLDER"] = os.path.join(app.root_path, "static", "uploads")
     app.config["OUTPUT_FOLDER"] = os.path.join(app.root_path, "static", "outputs")
-    ensure_output_dir(app.config["UPLOAD_FOLDER"]) 
-    ensure_output_dir(app.config["OUTPUT_FOLDER"]) 
+    ensure_output_dir(app.config["UPLOAD_FOLDER"])
+    ensure_output_dir(app.config["OUTPUT_FOLDER"])
 
     @app.route("/")
     def index():
         return render_template("index.html")
 
-    # Feature pages
     @app.route("/text2img")
     def page_text2img():
         return render_template("text2img.html")
@@ -217,6 +219,7 @@ def create_app() -> Flask:
     def serve_output(filename: str):
         return send_from_directory(app.config["OUTPUT_FOLDER"], filename)
 
+    # ✅ text2img API
     @app.post("/api/text2img")
     def api_text2img():
         try:
@@ -242,11 +245,11 @@ def create_app() -> Flask:
             )
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "t2i")
-            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
+            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"} )
         except Exception as e:
-            raise e
             return jsonify({"error": str(e)}), 500
 
+    # ✅ img2img API
     @app.post("/api/img2img")
     def api_img2img():
         try:
@@ -256,12 +259,12 @@ def create_app() -> Flask:
             steps = int(request.form.get("steps", 30))
             guidance = float(request.form.get("guidance_scale", 7.0))
             init_image_file = request.files.get("image")
+
             if not init_image_file:
                 return jsonify({"error": "Missing image file"}), 400
             if not prompt or str(prompt).strip() == "":
                 return jsonify({"error": "Missing prompt"}), 400
 
-            # Load image
             from PIL import Image
             init_image = Image.open(init_image_file.stream).convert("RGB")
 
@@ -276,15 +279,17 @@ def create_app() -> Flask:
             )
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "i2i")
-            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
+            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"} )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ✅ Upscale API
     @app.post("/api/upscale")
     def api_upscale():
         try:
-            prompt = request.form.get("prompt", None)  # optional, some upscalers accept it
+            prompt = request.form.get("prompt", "high detail, sharp, clean")
             image_file = request.files.get("image")
+
             if not image_file:
                 return jsonify({"error": "Missing image file"}), 400
 
@@ -292,23 +297,22 @@ def create_app() -> Flask:
             lowres = Image.open(image_file.stream).convert("RGB")
 
             pipe = load_upscaler()
-            # Some SD upscalers accept a prompt; if None, pass empty string
-            result = pipe(
-                prompt=prompt or "high detail, sharp, clean",
-                image=lowres,
-            )
+            result = pipe(prompt=prompt, image=lowres)
+
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "upscale")
-            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
+            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"} )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ✅ Denoise API
     @app.post("/api/denoise")
     def api_denoise():
         try:
             img_file = request.files.get("image")
             if not img_file:
                 return jsonify({"error": "Missing image file"}), 400
+
             strength = int(request.form.get("strength", 20))
             strength = max(0, min(100, strength))
 
@@ -317,20 +321,20 @@ def create_app() -> Flask:
             import cv2
 
             pil_img = Image.open(img_file.stream).convert("RGB")
-            img = np.array(pil_img)[:, :, ::-1]  # RGB->BGR
+            img = np.array(pil_img)[:, :, ::-1]
 
             h = max(1, int(strength))
             hColor = h
-            templateWindowSize = 7
-            searchWindowSize = 21
-            denoised = cv2.fastNlMeansDenoisingColored(img, None, h, hColor, templateWindowSize, searchWindowSize)
+            denoised = cv2.fastNlMeansDenoisingColored(img, None, h, hColor, 7, 21)
             denoised_rgb = denoised[:, :, ::-1]
+
             out_img = Image.fromarray(denoised_rgb)
             filename = save_pil_image(out_img, app.config["OUTPUT_FOLDER"], "denoise")
-            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
+            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"} )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
+    # ✅ Inpainting API
     @app.post("/api/inpaint")
     def api_inpaint():
         try:
@@ -343,12 +347,13 @@ def create_app() -> Flask:
 
             if not img_file or not mask_file:
                 return jsonify({"error": "Missing image or mask file"}), 400
+
             if not prompt or str(prompt).strip() == "":
                 return jsonify({"error": "Missing prompt"}), 400
 
             from PIL import Image
             init_image = Image.open(img_file.stream).convert("RGB")
-            mask_image = Image.open(mask_file.stream).convert("L")  # white=mask, black=keep
+            mask_image = Image.open(mask_file.stream).convert("L")
 
             pipe = load_sdxl_inpaint()
             result = pipe(
@@ -359,9 +364,10 @@ def create_app() -> Flask:
                 num_inference_steps=steps,
                 guidance_scale=guidance,
             )
+
             image = result.images[0]
             filename = save_pil_image(image, app.config["OUTPUT_FOLDER"], "inpaint")
-            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"})
+            return jsonify({"filename": filename, "url": f"/static/outputs/{filename}"} )
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
@@ -370,7 +376,4 @@ def create_app() -> Flask:
 
 if __name__ == "__main__":
     app = create_app()
-    #host = os.environ.get("FLASK_HOST", "0.0.0.0")
-    #port = int(os.environ.get("FLASK_PORT", "5000"))
-    #debug = os.environ.get("FLASK_DEBUG", "0") == "1"
     app.run(debug=True)
